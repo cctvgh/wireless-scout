@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>无线环境勘察系统 WireScout</title>
+<style>
+  :root{
+    --primary:#3b82f6; --primary-soft:#eff6ff; --bg:#f5f7fb; --card:#ffffff;
+    --text:#1e293b; --muted:#64748b; --border:#e2e8f0; --ok:#10b981; --warn:#f59e0b; --bad:#ef4444;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+  header{background:linear-gradient(135deg,#1d4ed8,#3b82f6);color:#fff;padding:16px 24px;display:flex;align-items:center;gap:12px;box-shadow:0 2px 10px rgba(29,78,216,.25)}
+  header .logo{width:36px;height:36px;background:rgba(255,255,255,.18);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px}
+  header h1{font-size:18px;font-weight:600}
+  header .sub{font-size:12px;opacity:.85;margin-top:2px}
+  header .spacer{flex:1}
+  .badge{background:rgba(255,255,255,.16);border-radius:999px;padding:4px 12px;font-size:12px}
+  .container{max-width:1200px;margin:20px auto;padding:0 16px}
+  nav.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+  nav.tabs button{background:var(--card);border:1px solid var(--border);color:var(--muted);padding:8px 18px;border-radius:999px;cursor:pointer;font-size:13px;transition:.15s}
+  nav.tabs button.active{background:var(--primary);border-color:var(--primary);color:#fff}
+  nav.tabs button:hover:not(.active){border-color:var(--primary);color:var(--primary)}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:16px}
+  .card h3{font-size:15px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .card h3 svg{width:18px;height:18px;color:var(--primary)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+  .stat{background:var(--primary-weak);border-radius:12px;padding:14px;text-align:center}
+  .stat .num{font-size:26px;font-weight:700;color:var(--primary)}
+  .stat .lbl{color:var(--muted);font-size:12px;margin-top:4px}
+  .btn{display:inline-flex;align-items:center;gap:6px;background:var(--primary);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:14px;cursor:pointer;transition:.15s}
+  .btn:hover{filter:brightness(1.08)}
+  .btn.ghost{background:transparent;color:var(--primary);border:1px solid var(--primary)}
+  .btn.sm{padding:5px 10px;font-size:12px}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--border)}
+  th{background:#f8fafc;color:var(--muted);font-weight:500;position:sticky;top:0}
+  tr:hover td{background:#f8fafc}
+  .tag{padding:2px 8px;border-radius:999px;font-size:12px}
+  .tag.ok{background:#ecfdf5;color:#047857}
+  .tag.warn{background:#fffbeb;color:#b45309}
+  .tag.bad{background:#fef2f2;color:#b91c1c}
+  .hint{color:var(--muted);font-size:12px;line-height:1.7}
+  #map{height:420px;border-radius:12px;border:1px solid var(--border);background:#eaf1fb;position:relative;overflow:hidden}
+  #map .fallback{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--muted)}
+  .toast{position:fixed;top:20px;right:20px;z-index:999;background:#fff;border-left:4px solid var(--primary);box-shadow:0 4px 16px rgba(0,0,0,.12);border-radius:8px;padding:12px 16px;max-width:340px;display:none}
+  .toast.show{display:block;animation:slide .25s ease}
+  @keyframes slide{from{transform:translateX(20px);opacity:0}to{transform:none;opacity:1}}
+  .drop{border:2px dashed var(--border);border-radius:12px;padding:26px;text-align:center;color:var(--muted);cursor:pointer;transition:.15s}
+  .drop:hover,.drop.over{border-color:var(--primary);background:var(--primary-weak)}
+  .bar{height:8px;border-radius:99px;background:#e2e8f0;overflow:hidden}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,#3b82f6,#22d3ee);border-radius:99px}
+  .progress{width:100%;height:4px;background:#e2e8f0;border-radius:99px;overflow:hidden;display:none;margin-top:10px}
+  .progress i{display:block;height:100%;width:30%;background:var(--primary);border-radius:99px;animation:load 1s infinite}
+  @keyframes load{from{margin-left:-30%}to{margin-left:100%}}
+  .spacer{flex:1}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">📡</div>
+  <div>
+    <h1>无线环境勘察系统</h1>
+    <div class="sub">WireScout · 本地勘察 · 数据不出本机</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="badge" id="healthBadge">连接中…</div>
+</header>
+
+<div class="container">
+  <nav class="tabs">
+    <button class="active" data-tab="survey">WiFi 勘察</button>
+    <button data-tab="map">站点地图</button>
+    <button data-tab="import">遥测导入</button>
+    <button data-tab="report">勘察报告</button>
+  </nav>
+
+  <!-- WiFi 勘察 -->
+  <section class="tab-page" id="tab-survey">
+    <div class="card">
+      <h3>📶 无线网络勘察</h3>
+      <p class="hint" style="margin-bottom:12px">调用本机无线网卡可见的网络列表（netsh wlan），仅被动勘察。在 Windows 系统上可用；无无线网卡或权限受限时返回空。</p>
+      <button class="btn" id="btnScan">开始勘察</button>
+      <span class="hint" id="scanInfo" style="margin-left:12px"></span>
+      <div class="progress" id="scanProgress"><i></i></div>
+    </div>
+    <div class="card" id="wifiCard" style="display:none">
+      <h3>勘察结果</h3>
+      <div class="grid" id="wifiStats"></div>
+      <div style="overflow:auto;max-height:420px;margin-top:12px">
+        <table id="wifiTable"></table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 地图 -->
+  <section class="tab-page" id="tab-map" style="display:none">
+    <div class="card">
+      <h3>🗺 站点分布</h3>
+      <div id="map"><div class="fallback">地图组件加载中…</div></div>
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <select id="dsSelect" style="padding:7px 10px;border:1px solid var(--border);border-radius:8px"></select>
+        <button class="btn sm" id="btnLoadStations">加载站点</button>
+        <span class="spacer"></span>
+        <button class="btn ghost sm" id="btnExportGeo">导出 GeoJSON</button>
+        <button class="btn ghost sm" id="btnExportCsv">导出 CSV</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>📋 站点列表</h3>
+      <div style="overflow:auto;max-height:320px"><table id="stationTable"></table></div>
+    </div>
+  </section>
+
+  <!-- 导入 -->
+  <section class="tab-page" id="tab-import" style="display:none">
+    <div class="card">
+      <h3>📥 遥测数据导入</h3>
+      <p class="hint" style="margin-bottom:12px">支持 CSV / GeoJSON / KML 站点数据。自动识别 经纬度/名称/SSID/加密/信道 列；GeoJSON 支持 FeatureCollection。数据仅存本机。</p>
+      <div class="drop" id="dropZone">拖拽文件到此处，或点击选择文件</div>
+      <input type="file" id="fileInput" accept=".csv,.geojson,.json,.kml" style="display:none">
+      <div class="progress" id="importProgress"><i></i></div>
+    </div>
+    <div class="card">
+      <h3>已导入数据集</h3>
+      <table id="datasetTable"></table>
+    </div>
+  </section>
+
+  <!-- 报告 -->
+  <section class="tab-page" id="tab-report" style="display:none">
+    <div class="card">
+      <h3>📊 勘察报告</h3>
+      <button class="btn" id="btnReport">生成报告</button>
+      <span class="hint" id="reportTime" style="margin-left:12px"></span>
+      <div class="grid" id="reportStats" style="margin-top:16px"></div>
+    </div>
+    <div class="card">
+      <h3>加密方式分布</h3>
+      <div id="secBars"></div>
+    </div>
+    <div class="card">
+      <h3>当前网络明细（Top 20 信号）</h3>
+      <div style="overflow:auto;max-height:360px"><table id="reportTable"></table></div>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const api=(p,opt)=>fetch(p,opt).then(r=>r.json());
+let map=null, stations=[], mapMarkers=[];
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+
+function toast(msg,type){const t=$("#toast");t.textContent=msg;t.style.borderLeftColor=type==="err"?"var(--bad)":"var(--primary)";t.classList.add("show");clearTimeout(t._tm);t._tm=setTimeout(()=>t.classList.remove("show"),2600);}
+
+
+// tabs
+document.querySelectorAll("nav.tabs button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("nav.tabs button").forEach(x=>x.classList.remove("active"));
+  b.classList.add("active");
+  document.querySelectorAll(".tab-page").forEach(x=>x.style.display="none");
+  $("#tab-"+b.dataset.tab).style.display="";
+  if(b.dataset.tab==="report") loadReport();
+  if(b.dataset.tab==="map") loadStations();
+});
+
+// health
+api("/api/health").then(d=>{
+  $("#healthBadge").textContent=d.ok?("本地服务 "+d.version+" · Python "+d.python):"服务异常";
+}).catch(()=>$("#healthBadge").textContent="服务未启动");
+
+// WiFi scan
+$("#btnScan").onclick=async()=>{
+  $("#scanProgress").style.display="block";
+  const info=$("#scanInfo");info.textContent="";
+  try{
+    const d=await api("/api/wifi/scan");
+    $("#scanProgress").style.display="none";
+    if(!d.ok){toast(d.error||"扫描失败","err");info.textContent=d.error||"";return;}
+    renderWifi(d);
+  }catch(e){$("#scanProgress").style.display="none";toast("扫描失败："+e.message,"err");}
+};
+
+function renderWifi(d){
+  $("#wifiCard").style.display="";
+  $("#scanInfo").textContent="勘察时间 "+d.time;
+  const aps=d.aps||[];
+  $("#wifiStats").innerHTML=[
+    ["可见 AP",aps.length],["独立 SSID",new Set(aps.map(a=>a.ssid)).size],
+    ["WPA2/3 加密",aps.filter(a=>/wpa/i.test(a.encryption||a.auth||"")).length],
+    ["开放网络",aps.filter(a=>/open|无|none/i.test((a.auth||"")+(a.encryption||""))).length]
+  ].map(s=>`<div class="stat"><div class="num">${s[1]}</div><div class="lbl">${s[0]}</div></div>`).join("");
+  const head="<tr><th>SSID</th><th>BSSID</th><th>信号</th><th>信道</th><th>认证</th><th>加密</th></tr>";
+  const rows=aps.slice(0,200).map(a=>{
+    const p=a.signal_pct;
+    const cls=p==null?"":p>=60?"ok":p>=30?"warn":"bad";
+    return `<tr><td>${esc(a.ssid||"—")}</td><td>${esc(a.bssid||"—")}</td>
+      <td>${p==null?"—":`<span class="tag ${cls}">${p}%</span>`}</td>
+      <td>${esc(a.channel||"—")}</td><td>${esc(a.auth||"—")}</td><td>${esc(a.encryption||"—")}</td></tr>`;
+  }).join("");
+  $("#wifiTable").innerHTML=head+rows;
+}
+
+// map
+function initMap(){
+  if(map||!window.L)return;
+  map=L.map("map").setView([22.96,110.33],10); // 默认粤西
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OSM"}).addTo(map);
+  $("#map .fallback").style.display="none";
+}
+function ensureMap(){
+  if(window.L){initMap();}
+  else{
+    const s=document.createElement("script");
+    s.src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    s.onload=()=>{initMap();loadStations();};
+    document.head.appendChild(s);
+  }
+}
+function paintStations(){
+  if(!map)return;
+  mapMarkers.forEach(m=>map.removeLayer(m));mapMarkers=[];
+  const pts=stations.filter(s=>s.lat!=null&&s.lng!=null);
+  pts.forEach(s=>{
+    const m=L.marker([s.lat,s.lng]).bindPopup(`<b>${esc(s.name||s.ssid||"站点")}</b><br>${esc(s.security||"")} · 信道 ${esc(s.channel||"—")}`);
+    m.addTo(map);mapMarkers.push(m);
+  });
+  if(pts.length)map.fitBounds(L.latLngBounds(pts.map(s=>[s.lat,s.lng])),{padding:[30,30]});
+  else map.setView([22.5,110.33],8);
+}
+async function loadStations(){
+  const ds=$("#dsSelect").value;
+  try{
+    const d=await api("/api/stations?dataset="+(ds||""));
+    stations=d.stations||[];renderStationTable();paintStations();
+    $("#stationTable").innerHTML="<tr><th>名称/SSID</th><th>纬度</th><th>经度</th><th>加密</th><th>信道</th></tr>"+stations.slice(0,200).map(s=>`<tr><td>${esc(s.name||s.ssid||"—")}</td><td>${fmt(s.lat)}</td><td>${fmt(s.lng)}</td><td>${esc(s.security||"—")}</td><td>${fmt(s.channel)}</td></tr>`).join("");
+  }catch(e){toast("加载站点失败："+e.message,"err");}
+}
+function fmt(v){return v==null?"—":(typeof v==="number"?v.toFixed(5):v);}
+
+async function loadDatasets(){
+  const d=await api("/api/datasets");
+  $("#mapDataset").innerHTML='<option value="">全部站点</option>'+d.datasets.map(x=>`<option value="${x.id}">${esc(x.name)} (${x.rows}条)</option>`).join("");
+  $("#datasetTable").innerHTML="<tr><th>ID</th><th>名称</th><th>来源</th><th>行数</th><th>时间</th></tr>"+d.datasets.map(x=>`<tr><td>${x.id}</td><td>${esc(x.name)}</td><td>${x.source}</td><td>${x.rows}</td><td>${x.created}</td></tr>`).join("");
+}
+$("#btnLoadStations").onclick=loadStations;
+$("#btnExportGeo").onclick=async()=>{
+  const d=await api("/api/export?format=geojson");
+  download(JSON.stringify(d,null,2),"wire_scout.geojson","application/json");
+};
+$("#btnExportCsv").onclick=async()=>{
+  const d=await api("/api/export?format=csv");
+  download(d,"wire_scout.csv","text/csv");
+};
+function download(text,name,type){
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// import
+const dz=$("#dropZone");
+dz.onclick=()=>$("#fileInput").click();
+dz.ondragover=e=>{e.preventDefault();dz.classList.add("over");};
+dz.ondragleave=()=>dz.classList.remove("over");
+dz.ondrop=e=>{e.preventDefault();dz.classList.remove("over");if(e.dataTransfer.files.length)uploadFile(e.dataTransfer.files[0]);};
+$("#fileInput").onchange=e=>{if(e.target.files.length)uploadFile(e.target.files[0]);};
+function uploadFile(file){
+  $("#importProgress").style.display="block";
+  const fd=new FormData();fd.append("file",file);
+  fetch("/api/import",{method:"POST",body:fd}).then(r=>r.json()).then(d=>{
+    $("#importProgress").style.display="none";
+    if(d.ok){toast(`导入成功：${d.rows||d.imported||0} 条`);loadDatasets();}
+    else toast("导入失败："+(d.error||"未知"),"err");
+  }).catch(e=>{$("#importProgress").style.display="none";toast("上传失败："+e.message,"err");});
+}
+
+// report
+async function loadReport(){
+  const d=await api("/api/report");
+  $("#reportTime").textContent="生成于 "+d.time;
+  $("#reportStats").innerHTML=[
+    ["可见 AP",d.wifi.count],["导入站点",d.stations],["数据集",d.datasets],["基站记录",d.cells]
+  ].map(s=>`<div class="stat"><div class="num">${s[1]}</div><div class="lbl">${s[0]}</div></div>`).join("");
+  const dist=d.security_dist||[];
+  $("#secBars").innerHTML=dist.length?dist.map(s=>{
+    const max=Math.max(...dist.map(x=>x.count));
+    return `<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between"><span>${esc(s.type)}</span><span class="hint">${s.count}</span></div><div class="bar"><i style="width:${(s.count/max*100).toFixed(0)}%"></i></div></div>`;
+  }).join(""):"<span class=hint>暂无站点数据</span>";
+  const aps=d.wifi.aps||[];
+  $("#reportTable").innerHTML="<tr><th>SSID</th><th>BSSID</th><th>信号%</th><th>信道</th><th>认证</th></tr>"+aps.slice(0,20).map(a=>`<tr><td>${esc(a.ssid||"—")}</td><td>${esc(a.bssid||"—")}</td><td>${a.signal_pct??"—"}</td><td>${esc(a.channel||"—")}</td><td>${esc(a.auth||"—")}</td></tr>`).join("");
+}
+$("#btnReport").onclick=loadReport;
+
+// init
+loadDatasets();ensureMap();
+</script>
+</body>
+</html>
