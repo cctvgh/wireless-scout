@@ -1,4 +1,4 @@
-# WireScout — 无线勘察与信号覆盖助手
+﻿# WireScout — 无线勘察与信号覆盖助手
 
 > 大型活动通信保障、网优勘察的"一条龙"本地工具：WiFi 扫描 → 站点/路测导入 → RSRP 分级着色地图 → 勘察报告，全程零第三方依赖、数据不出本机。
 
@@ -23,7 +23,7 @@ WireScout 把这条链收进一个本地 Web 工具，而且**专为内网/防�
 ## 快速开始
 
 ```bash
-git clone https://github.com/cctvgh/wireless-scout.git
+git clone https://github.com/wireless-scout.git
 cd wireless-scout
 python server.py --port 8090
 # 浏览器打开 http://127.0.0.1:8090
@@ -46,4 +46,4 @@ python server.py --port 8090
 
 ## License
 
-MIT © 2026 何汉锋
+MIT © 2026 Author
