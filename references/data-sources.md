@@ -1,13 +1,3 @@
----
-AIGC:
-  ContentProducer: '001191110102MAD55U9H0F10002'
-  ContentPropagator: '001191110102MAD55U9H0F10002'
-  Label: '1'
-  ProduceID: '9d043e37-fccd-410a-aea4-519c7398c161'
-  PropagateID: '9d043e37-fccd-410a-aea4-519c7398c161'
-  ReservedCode1: 'd5d6f25f-1df9-45ae-b395-1ce5b0a11680'
-  ReservedCode2: 'd5d6f25f-1df9-45ae-b395-1ce5b0a11680'
----
 
 # 数据源与字段说明
 
@@ -40,10 +30,14 @@ AIGC:
 
 ## 3. 基站查询（可选）
 
-- 数据源：OpenCellID 公开接口 `http://opencellid.org/cell/getInArea`。
+- 数据源：OpenCellID 公开接口 `https://opencellid.org/cell/getInArea`（强制 HTTPS 加密连接）。
 - 需要用户自行申请 Key，并以环境变量方式配置：`OPENCELLID_API_KEY=xxx python server.py --port 8090`。
+- **安全要求**：
+  - 必须通过 HTTPS 协议调用，代码中内置 scheme 校验，非 `https://` 拒绝请求。
+  - API Key 仅从环境变量读取，不写入代码、日志、配置文件或 URL 日志。
+  - 请求构造时 API Key 通过 HTTPS 加密通道传输，服务端返回后不记录完整 URL。
+  - 未配置 Key 时功能自动跳过，不影响其他功能。
 - 页面/API 通过 `/api/cells/search?lat=&lng=&radius=`（radius 单位：公里）触发查询，结果写入本地 `cells` 表。
-- 未配置时接口返回提示并跳过，不影响其他功能。
 
 ## 4. 存储与导出
 
@@ -56,3 +50,4 @@ AIGC:
 - 本工具只做被动勘察与本地数据处理，不实施任何主动探测、破解或非法监听。
 - 勘察数据建议用于：自有网络覆盖优化、活动保障无线环境评估、故障定位、行业分析。
 - 引用本项目代码到其他系统时，保留数据本地化与合规红线章节。
+- 外部数据源（如 OpenCellID）必须通过 HTTPS 加密调用，API Key 仅通过环境变量传递，不得硬编码或明文记录。

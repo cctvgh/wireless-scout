@@ -45,6 +45,12 @@
   .hint{color:var(--muted);font-size:12px;line-height:1.7}
   #map{height:420px;border-radius:12px;border:1px solid var(--border);background:#eaf1fb;position:relative;overflow:hidden}
   #map .fallback{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--muted)}
+  .legend{position:absolute;bottom:12px;left:12px;z-index:800;background:rgba(255,255,255,.94);border:1px solid var(--border);border-radius:10px;padding:8px 10px;font-size:12px;color:var(--text);box-shadow:0 2px 8px rgba(0,0,0,.08);line-height:1.7}
+  .legend .li{display:flex;align-items:center;gap:6px}
+  .legend .dot{width:12px;height:12px;border-radius:50%;display:inline-block;flex:none}
+  .legend{position:absolute;bottom:12px;left:12px;z-index:800;background:rgba(255,255,255,.94);border:1px solid var(--border);border-radius:10px;padding:8px 10px;font-size:12px;color:var(--text);box-shadow:0 2px 8px rgba(0,0,0,.08);line-height:1.7}
+  .legend .li{display:flex;align-items:center;gap:6px}
+  .legend .dot{width:12px;height:12px;border-radius:50%;display:inline-block;flex:none}
   .toast{position:fixed;top:20px;right:20px;z-index:999;background:#fff;border-left:4px solid var(--primary);box-shadow:0 4px 16px rgba(0,0,0,.12);border-radius:8px;padding:12px 16px;max-width:340px;display:none}
   .toast.show{display:block;animation:slide .25s ease}
   @keyframes slide{from{transform:translateX(20px);opacity:0}to{transform:none;opacity:1}}
@@ -98,8 +104,16 @@
   <!-- 地图 -->
   <section class="tab-page" id="tab-map" style="display:none">
     <div class="card">
-      <h3>🗺 站点分布</h3>
-      <div id="map"><div class="fallback">地图组件加载中…</div></div>
+      <h3>🗺 站点分布（LTE/NR 按 RSRP 分级着色）</h3>
+      <div id="map"><div class="fallback">地图组件加载中…</div>
+        <div class="legend" id="mapLegend">
+          <div class="li"><span class="dot" style="background:#10b981"></span>≥ -70 dBm 优</div>
+          <div class="li"><span class="dot" style="background:#84cc16"></span>-90 ~ -70 良</div>
+          <div class="li"><span class="dot" style="background:#f59e0b"></span>-100 ~ -90 弱</div>
+          <div class="li"><span class="dot" style="background:#ef4444"></span>&lt; -100 dBm 差</div>
+          <div class="li"><span class="dot" style="background:#64748b"></span>无 RSRP</div>
+        </div>
+      </div>
       <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
         <select id="dsSelect" style="padding:7px 10px;border:1px solid var(--border);border-radius:8px"></select>
         <button class="btn sm" id="btnLoadStations">加载站点</button>
@@ -118,7 +132,7 @@
   <section class="tab-page" id="tab-import" style="display:none">
     <div class="card">
       <h3>📥 遥测数据导入</h3>
-      <p class="hint" style="margin-bottom:12px">支持 CSV / GeoJSON / KML 站点数据。自动识别 经纬度/名称/SSID/加密/信道 列；GeoJSON 支持 FeatureCollection。数据仅存本机。</p>
+      <p class="hint" style="margin-bottom:12px">支持 CSV / GeoJSON / KML 站点数据。自动识别 经纬度/名称/SSID/加密/信道；<b>LTE/NR 路测</b>自动识别 RSRP/RSRQ/SINR/PCI/小区 字段（如 RSRP、RSRQ、SINR、PCI、Cell ID、cell_id、SS-RSRP 等），地图按 RSRP 分级着色。GeoJSON 支持 FeatureCollection。数据仅存本机。</p>
       <div class="drop" id="dropZone">拖拽文件到此处，或点击选择文件</div>
       <input type="file" id="fileInput" accept=".csv,.geojson,.json,.kml" style="display:none">
       <div class="progress" id="importProgress"><i></i></div>
@@ -136,6 +150,10 @@
       <button class="btn" id="btnReport">生成报告</button>
       <span class="hint" id="reportTime" style="margin-left:12px"></span>
       <div class="grid" id="reportStats" style="margin-top:16px"></div>
+    </div>
+    <div class="card">
+      <h3>📊 RSRP 信号强度分布</h3>
+      <div id="rsrpBars"></div>
     </div>
     <div class="card">
       <h3>加密方式分布</h3>
@@ -223,12 +241,28 @@ function ensureMap(){
     document.head.appendChild(s);
   }
 }
+function rsrpColor(v){
+  if(v==null)return "#64748b";
+  if(v>=-70)return "#10b981";
+  if(v>=-90)return "#84cc16";
+  if(v>=-100)return "#f59e0b";
+  return "#ef4444";
+}
+function s2(v){return v==null?"—":(typeof v==="number"?v.toFixed(1):v);}
 function paintStations(){
   if(!map)return;
   mapMarkers.forEach(m=>map.removeLayer(m));mapMarkers=[];
   const pts=stations.filter(s=>s.lat!=null&&s.lng!=null);
   pts.forEach(s=>{
-    const m=L.marker([s.lat,s.lng]).bindPopup(`<b>${esc(s.name||s.ssid||"站点")}</b><br>${esc(s.security||"")} · 信道 ${esc(s.channel||"—")}`);
+    const col=rsrpColor(s.rsrp);
+    const m=L.circleMarker([s.lat,s.lng],{radius:8,color:"#fff",weight:1.5,fillColor:col,fillOpacity:.9});
+    const lns=[];
+    lns.push(`<b>${esc(s.name||s.ssid||"站点")}</b>`);
+    if(s.cell_id)lns.push(`小区 ${esc(s.cell_id)}${s.pci?" · PCI "+esc(s.pci):""}`);
+    if(s.rsrp!=null)lns.push(`RSRP ${s2(s.rsrp)} dBm${s.rsrq!=null?" · RSRQ "+s2(s.rsrq):""}${s.sinr!=null?" · SINR "+s2(s.sinr):""}`);
+    if(s.ssid)lns.push(`SSID ${esc(s.ssid)} · 信道 ${esc(s.channel||"—")}`);
+    if(s.security)lns.push(`加密 ${esc(s.security)}`);
+    m.bindPopup(lns.join("<br>"));
     m.addTo(map);mapMarkers.push(m);
   });
   if(pts.length)map.fitBounds(L.latLngBounds(pts.map(s=>[s.lat,s.lng])),{padding:[30,30]});
@@ -238,15 +272,15 @@ async function loadStations(){
   const ds=$("#dsSelect").value;
   try{
     const d=await api("/api/stations?dataset="+(ds||""));
-    stations=d.stations||[];renderStationTable();paintStations();
-    $("#stationTable").innerHTML="<tr><th>名称/SSID</th><th>纬度</th><th>经度</th><th>加密</th><th>信道</th></tr>"+stations.slice(0,200).map(s=>`<tr><td>${esc(s.name||s.ssid||"—")}</td><td>${fmt(s.lat)}</td><td>${fmt(s.lng)}</td><td>${esc(s.security||"—")}</td><td>${fmt(s.channel)}</td></tr>`).join("");
+    stations=d.stations||[];paintStations();
+    $("#stationTable").innerHTML="<tr><th>名称</th><th>纬度</th><th>经度</th><th>RSRP</th><th>RSRQ</th><th>SINR</th><th>PCI</th><th>小区</th><th>加密</th><th>信道</th></tr>"+stations.slice(0,200).map(s=>`<tr><td>${esc(s.name||s.ssid||"—")}</td><td>${fmt(s.lat)}</td><td>${fmt(s.lng)}</td><td>${s2(s.rsrp)}</td><td>${s2(s.rsrq)}</td><td>${s2(s.sinr)}</td><td>${esc(s.pci||"—")}</td><td>${esc(s.cell_id||"—")}</td><td>${esc(s.security||"—")}</td><td>${fmt(s.channel)}</td></tr>`).join("");
   }catch(e){toast("加载站点失败："+e.message,"err");}
 }
 function fmt(v){return v==null?"—":(typeof v==="number"?v.toFixed(5):v);}
 
 async function loadDatasets(){
   const d=await api("/api/datasets");
-  $("#mapDataset").innerHTML='<option value="">全部站点</option>'+d.datasets.map(x=>`<option value="${x.id}">${esc(x.name)} (${x.rows}条)</option>`).join("");
+  $("#dsSelect").innerHTML='<option value="">全部站点</option>'+d.datasets.map(x=>`<option value="${x.id}">${esc(x.name)} (${x.rows}条)</option>`).join("");
   $("#datasetTable").innerHTML="<tr><th>ID</th><th>名称</th><th>来源</th><th>行数</th><th>时间</th></tr>"+d.datasets.map(x=>`<tr><td>${x.id}</td><td>${esc(x.name)}</td><td>${x.source}</td><td>${x.rows}</td><td>${x.created}</td></tr>`).join("");
 }
 $("#btnLoadStations").onclick=loadStations;
@@ -293,6 +327,16 @@ async function loadReport(){
     const max=Math.max(...dist.map(x=>x.count));
     return `<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between"><span>${esc(s.type)}</span><span class="hint">${s.count}</span></div><div class="bar"><i style="width:${(s.count/max*100).toFixed(0)}%"></i></div></div>`;
   }).join(""):"<span class=hint>暂无站点数据</span>";
+  const rdist=d.rsrp_dist||[];
+  if(rdist.length){
+    const rmax=Math.max(...rdist.map(x=>x.count))||1;
+    $("#rsrpBars").innerHTML=rdist.map(r=>{
+      const pct=Math.max(3,r.count/rmax*100).toFixed(0);
+      return `<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between"><span>${esc(r.label)}</span><span class="hint">${r.count}</span></div><div class="bar"><i style="width:${pct}%"></i></div></div>`;
+    }).join("");
+  } else {
+    $("#rsrpBars").innerHTML="<span class=hint>暂无带 RSRP 的路测数据</span>";
+  }
   const aps=d.wifi.aps||[];
   $("#reportTable").innerHTML="<tr><th>SSID</th><th>BSSID</th><th>信号%</th><th>信道</th><th>认证</th></tr>"+aps.slice(0,20).map(a=>`<tr><td>${esc(a.ssid||"—")}</td><td>${esc(a.bssid||"—")}</td><td>${a.signal_pct??"—"}</td><td>${esc(a.channel||"—")}</td><td>${esc(a.auth||"—")}</td></tr>`).join("");
 }

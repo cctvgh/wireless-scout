@@ -20,6 +20,8 @@
 运行方式:
     python server.py [--port 8090]
     浏览器打开 http://127.0.0.1:8090
+
+    V1.0.2 安全加固：OpenCellID 强制 HTTPS、API Key 日志脱敏、异常信息不泄露完整 URL
 """
 
 import argparse
@@ -46,7 +48,10 @@ for d in (DATA_DIR, UPLOAD_DIR, REPORT_DIR):
     os.makedirs(d, exist_ok=True)
 
 APP_TITLE = "无线环境勘察系统 WireScout"
-VERSION = "V1.0.0"
+VERSION = "V1.2.0"  # V1.2.0: 支持 LTE/NR 路测字段(RSRP/RSRQ/SINR/PCI/小区)，地图按 RSRP 分级着色
+
+# OpenCellID 基站查询（可选）：通过环境变量 OPENCELLID_API_KEY 配置，未配置时自动跳过
+OPENCELLID_API_KEY = os.environ.get("OPENCELLID_API_KEY", "").strip()
 
 
 # ---------------------------------------------------------------- database
@@ -63,10 +68,12 @@ def db_init():
                 ds_id INTEGER, name TEXT, ssid TEXT, lat REAL, lng REAL,
                 signal REAL, channel TEXT, security TEXT, extra TEXT)"""
         )
-        # 兼容旧表：缺 ssid 列时补充
+        # 兼容旧表：缺列时补充（ssid + LTE/WR 路测信号字段）
         cols = [r[1] for r in conn.execute("PRAGMA table_info(stations)").fetchall()]
-        if "ssid" not in cols:
-            conn.execute("ALTER TABLE stations ADD COLUMN ssid TEXT")
+        for _col, _typ in (("ssid", "TEXT"), ("rsrp", "REAL"), ("rsrq", "REAL"),
+                           ("sinr", "REAL"), ("pci", "TEXT"), ("cell_id", "TEXT")):
+            if _col not in cols:
+                conn.execute("ALTER TABLE stations ADD COLUMN %s %s" % (_col, _typ))
         conn.execute(
             """CREATE TABLE IF NOT EXISTS cells(
                 mcc INTEGER, mnc INTEGER, lac INTEGER, cellid INTEGER,
@@ -169,15 +176,18 @@ def wifi_scan():
 
 # ---------------------------------------------------------------- telemetry import
 def sniff_columns(header):
-    """自动识别列：lat/lng/ssid/name/security/channel 等。"""
-    lat = lng = name = ssid = sec = ch = None
+    """自动识别列：name/ssid/security/channel + LTE/NR 信号字段(rsrp/rsrq/sinr/pci/cell)。
+
+    列名识别对大小写、空格、下划线、连字符容错（如 "SS-RSRP"、"cell_id"、"Cell ID"）。
+    """
+    lat = lng = name = ssid = sec = ch = rsrp = rsrq = sinr = pci = cell = None
     for i, h in enumerate(header):
-        hl = h.strip().lower()
-        if lat is None and hl in ("lat", "latitude", "纬度", "lat度", "y"):
+        hl = h.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+        if lat is None and hl in ("lat", "latitude", "纬度", "y"):
             lat = i
         elif lng is None and hl in ("lon", "lng", "long", "longitude", "经度", "x"):
             lng = i
-        elif ssid is None and hl in ("ssid", "网络名", "essid"):
+        elif ssid is None and hl in ("ssid", "essid", "网络名"):
             ssid = i
         elif name is None and hl in ("name", "名称", "站点", "title", "站名"):
             name = i
@@ -185,8 +195,21 @@ def sniff_columns(header):
             sec = i
         elif ch is None and hl in ("channel", "信道", "频道"):
             ch = i
+        elif rsrp is None and hl in ("rsrp", "ssrsrp", "crsrsrp", "ltersrp", "nrrsrp",
+                                     "signal", "signaldbm", "信号强度", "rsrpdb"):
+            rsrp = i
+        elif rsrq is None and hl in ("rsrq", "ssrsrq", "rsrqdb"):
+            rsrq = i
+        elif sinr is None and hl in ("sinr", "sssinr", "sinrdb", "siner"):
+            sinr = i
+        elif pci is None and hl in ("pci", "pciid", "小区pci"):
+            pci = i
+        elif cell is None and hl in ("cell", "cellid", "cellid", "eci", "ecgi",
+                                     "tac", "tcell", "小区", "小区id", "小区标识"):
+            cell = i
     return {"lat": lat, "lng": lng, "name": name, "ssid": ssid,
-            "security": sec, "channel": ch}
+            "security": sec, "channel": ch,
+            "rsrp": rsrp, "rsrq": rsrq, "sinr": sinr, "pci": pci, "cell": cell}
 
 
 def _to_float(v):
@@ -226,9 +249,15 @@ def import_csv(name, raw_bytes):
             ssid = r[cols["ssid"]] if cols["ssid"] is not None and cols["ssid"] < len(r) else ""
             sec = r[cols["security"]] if cols["security"] is not None and cols["security"] < len(r) else ""
             ch = r[cols["channel"]] if cols["channel"] is not None and cols["channel"] < len(r) else ""
+            rsrp = _to_float(r[cols["rsrp"]]) if cols["rsrp"] is not None and cols["rsrp"] < len(r) else None
+            rsrq = _to_float(r[cols["rsrq"]]) if cols["rsrq"] is not None and cols["rsrq"] < len(r) else None
+            sinr = _to_float(r[cols["sinr"]]) if cols["sinr"] is not None and cols["sinr"] < len(r) else None
+            pci = r[cols["pci"]].strip() if cols["pci"] is not None and cols["pci"] < len(r) else ""
+            cell = r[cols["cell"]].strip() if cols["cell"] is not None and cols["cell"] < len(r) else ""
             conn.execute(
-                "INSERT INTO stations(ds_id,name,lat,lng,ssid,security,channel) VALUES(?,?,?,?,?,?,?)",
-                (dsid, name, lat, lng, ssid, sec, ch))
+                "INSERT INTO stations(ds_id,name,lat,lng,ssid,security,channel,rsrp,rsrq,sinr,pci,cell_id) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (dsid, name, lat, lng, ssid, sec, ch, rsrp, rsrq, sinr, pci, cell))
             n += 1
     return {"ok": True, "dataset_id": dsid, "imported": n}
 
@@ -253,10 +282,23 @@ def import_geojson(raw_bytes):
             else:
                 continue
             props = f.get("properties") or {}
+
+            def _pv(*keys):
+                for k in keys:
+                    if props.get(k) not in (None, ""):
+                        return props[k]
+                return None
+
             conn.execute(
-                "INSERT INTO stations(ds_id, name, lat, lng, ssid, security, channel) VALUES(?,?,?,?,?,?,?)",
+                "INSERT INTO stations(ds_id, name, lat, lng, ssid, security, channel, rsrp, rsrq, sinr, pci, cell_id) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (dsid, props.get("name", ""), lat, lng, props.get("ssid", ""),
-                 props.get("security", ""), str(props.get("channel", ""))))
+                 props.get("security", ""), str(props.get("channel", "") or ""),
+                 _to_float(_pv("rsrp", "RSRP", "ss-rsrp", "signal")),
+                 _to_float(_pv("rsrq", "RSRQ", "ss-rsrq")),
+                 _to_float(_pv("sinr", "SINR", "ss-sinr")),
+                 str(_pv("pci", "PCI", "") or ""),
+                 str(_pv("cell_id", "cellid", "cell", "ecgi", "eci", "") or "")))
             n += 1
     return {"ok": True, "rows": n}
 
@@ -285,18 +327,32 @@ def import_kml(raw_bytes):
 # ---------------------------------------------------------------- cells query (optional)
 OPENCELLID_KEY = os.environ.get("OPENCELLID_API_KEY", "")
 
+# OpenCellID 接口固定使用 HTTPS（安全红线：禁止 HTTP 明文传输 API Key）
+OPENCELLID_BASE_URL = "https://opencellid.org/cell/getInArea"
+
 
 def query_opencellid(lat, lng, radius=5, api_key=OPENCELLID_KEY):
-    """通过 OpenCellID 公开接口查询区域基站（需用户自配 API Key，可选）。"""
+    """通过 OpenCellID 公开接口查询区域基站（需用户自配 API Key，可选）。
+
+    安全措施：
+    - 强制 HTTPS 加密连接，代码内置 scheme 校验，非 https:// 直接拒绝
+    - API Key 仅从环境变量读取，不硬编码、不写入日志、不输出到控制台
+    - 请求 URL 中不打印/记录 API Key，日志仅记录查询坐标与结果数量
+    """
     if not api_key or api_key == "your_opencellid_api_key":
         return {"ok": False, "reason": "未配置 OPENCELLID_API_KEY，跳过（基站数据为可选增强项）"}
-    url = ("http://opencellid.org/cell/getInArea?key=%s&lat=%.5f&lon=%.5f&radius=%d&format=json&limit=100"
-           % (api_key, lat, lng, int(radius * 1000)))
+    # 安全校验：强制 HTTPS
+    if not OPENCELLID_BASE_URL.startswith("https://"):
+        return {"ok": False, "reason": "安全拒绝：OpenCellID 接口必须使用 HTTPS，当前配置不合规"}
+    url = ("%s?key=%s&lat=%.5f&lon=%.5f&radius=%d&format=json&limit=100"
+           % (OPENCELLID_BASE_URL, api_key, lat, lng, int(radius * 1000)))
     try:
-        with urllib.request.urlopen(url, timeout=8) as resp:
+        req = urllib.request.Request(url, headers={"User-Agent": "WireScout/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        # 日志中不包含 API Key 或完整 URL，仅记录异常类型
+        return {"ok": False, "error": type(exc).__name__}
     cells = []
     for c in data.get("cells", []):
         cells.append({
@@ -321,12 +377,32 @@ def build_report():
         dsc = conn.execute("SELECT COUNT(*) FROM datasets").fetchone()[0]
         sec_rows = conn.execute("SELECT security, COUNT(*) FROM stations WHERE security<>'' GROUP BY security").fetchall()
         cells = conn.execute("SELECT COUNT(*) FROM cells").fetchone()[0]
+        rsrp_total = conn.execute("SELECT COUNT(*) FROM stations WHERE rsrp IS NOT NULL").fetchone()[0]
+
+        def _cnt(lo=None, hi=None):
+            q = "SELECT COUNT(*) FROM stations WHERE rsrp IS NOT NULL"
+            args = []
+            if lo is not None:
+                q += " AND rsrp>=?"
+                args.append(lo)
+            if hi is not None:
+                q += " AND rsrp<?"
+                args.append(hi)
+            return conn.execute(q, args).fetchone()[0]
+
+        rsrp_dist = [
+            {"label": "≥ -70 dBm（优）", "count": _cnt(lo=-70)},
+            {"label": "-90~-70 dBm（良）", "count": _cnt(lo=-90, hi=-70)},
+            {"label": "-100~-90 dBm（弱）", "count": _cnt(lo=-100, hi=-90)},
+            {"label": "< -100 dBm（差）", "count": _cnt(hi=-100)},
+        ]
     wifi = wifi_scan()
     return {
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "wifi": {"count": wifi["count"] if wifi["ok"] else 0, "aps": wifi.get("aps", [])},
         "stations": total, "datasets": dsc, "cells": cells,
         "security_dist": [{"type": s or "未知", "count": n} for s, n in sec_rows],
+        "rsrp_dist": rsrp_dist, "rsrp_total": rsrp_total,
     }
 
 
@@ -373,12 +449,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True, "datasets": [dict(zip(["id", "name", "source", "rows", "created"], r)) for r in rows]})
         elif p == "/api/stations":
             ds = q.get("dataset", "")
+            sel = "SELECT rowid,name,lat,lng,ssid,security,channel,rsrp,rsrq,sinr,pci,cell_id FROM stations"
             with sqlite3.connect(DB_PATH) as conn:
                 if ds and ds.isdigit():
-                    rows = conn.execute("SELECT rowid,name,lat,lng,ssid,security,channel FROM stations WHERE ds_id=?", (int(ds),)).fetchall()
+                    rows = conn.execute(sel + " WHERE ds_id=?", (int(ds),)).fetchall()
                 else:
-                    rows = conn.execute("SELECT rowid,name,lat,lng,ssid,security,channel FROM stations").fetchall()
-            self._send(200, {"ok": True, "count": len(rows), "stations": [dict(zip(["id", "name", "lat", "lng", "ssid", "security", "channel"], r)) for r in rows]})
+                    rows = conn.execute(sel).fetchall()
+            keys = ["id", "name", "lat", "lng", "ssid", "security", "channel",
+                    "rsrp", "rsrq", "sinr", "pci", "cell_id"]
+            self._send(200, {"ok": True, "count": len(rows), "stations": [dict(zip(keys, r)) for r in rows]})
         elif p == "/api/report":
             self._send(200, build_report())
         elif p == "/api/cells/search":
@@ -389,7 +468,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 self._send(400, {"ok": False, "error": "lat/lng 参数非法"})
                 return
-            self._send(200, query_opencellid(lat, lng, radius))
+            self._send(200, query_opencellid(lat, lng, radius, OPENCELLID_API_KEY))
         elif p == "/api/cells":
             with sqlite3.connect(DB_PATH) as conn:
                 rows = conn.execute("SELECT mcc,mnc,lac,cellid,lat,lng,rssi,note,created FROM cells ORDER BY rowid DESC LIMIT 500").fetchall()
@@ -397,16 +476,19 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/api/export":
             fmt = q.get("format", "geojson")
             with sqlite3.connect(DB_PATH) as conn:
-                rows = conn.execute("SELECT name, lat, lng, ssid, security, channel FROM stations").fetchall()
+                rows = conn.execute(
+                    "SELECT name, lat, lng, ssid, security, channel, rsrp, rsrq, sinr, pci, cell_id FROM stations").fetchall()
             if fmt == "geojson":
                 feats = [{"type": "Feature",
                           "geometry": {"type": "Point", "coordinates": [r[2], r[1]]},
-                          "properties": {"name": r[0], "ssid": r[3], "security": r[4], "channel": r[5]}} for r in rows]
+                          "properties": {"name": r[0], "ssid": r[3], "security": r[4], "channel": r[5],
+                                         "rsrp": r[6], "rsrq": r[7], "sinr": r[8], "pci": r[9], "cell_id": r[10]}} for r in rows]
                 self._send(200, {"type": "FeatureCollection", "features": feats})
             else:
                 buf = io.StringIO()
                 w = csv.writer(buf)
-                w.writerow(["name", "lat", "lng", "ssid", "security", "channel"])
+                w.writerow(["name", "lat", "lng", "ssid", "security", "channel",
+                            "rsrp", "rsrq", "sinr", "pci", "cell_id"])
                 w.writerows(rows)
                 self._send(200, buf.getvalue(), "text/csv; charset=utf-8")
         else:
